@@ -1,4 +1,4 @@
-# FitGirl Fast Downloader
+# DownloadFlow
 
 A Python-based desktop application that automates bulk file downloads from archive link collections, with built-in extraction and cleanup features.
 
