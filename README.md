@@ -32,5 +32,7 @@ https://www.chai4.me/ishxt_bhat
 ## Dependencies
 
 ```bash
-pip install requests beautifulsoup4 tqdm
+pip install -r requirements.txt
+```
+
 
