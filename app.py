@@ -6,6 +6,7 @@ import requests
 from bs4 import BeautifulSoup
 import os
 import re
+import cloudscraper
 from urllib.parse import urlparse
 from tqdm import tqdm
 import threading
@@ -56,11 +57,13 @@ def get_links():
 
 
 # ===== DOWNLOAD FILE =====
-def download_file(download_url, output_path, file_name):
+def download_file(download_url, output_path, file_name, scraper):
     try:
-        response = requests.get(download_url, stream=True, timeout=60)
+        # Use scraper instead of requests
+        response = scraper.get(download_url, stream=True, timeout=60)
 
         if response.status_code != 200:
+            print(f"Failed to download. Server returned status code: {response.status_code}")
             return False
 
         total_size = int(response.headers.get('content-length', 0))
@@ -76,7 +79,6 @@ def download_file(download_url, output_path, file_name):
                     downloaded += len(data)
                     pbar.update(len(data))
 
-        
         if total_size > 0 and downloaded < total_size:
             print("Incomplete download:", file_name)
             return False
@@ -140,7 +142,7 @@ def remove_link_from_file(link):
     except Exception as e:
         print("Error updating input.txt:", e)
 
-# ===== CORE LOGIC  =====
+# ===== CORE LOGIC (runs in thread) =====
 def run_download():
     try:
         if not os.path.exists(INPUT_FILE):
@@ -171,6 +173,12 @@ def run_download():
 
         exhausted = True
 
+        scraper = cloudscraper.create_scraper(browser={
+            'browser': 'chrome',
+            'platform': 'windows',
+            'desktop': True
+        })
+
         while round_num <= MAX_RETRIES:
 
             with open(INPUT_FILE, "r") as f:
@@ -186,7 +194,11 @@ def run_download():
 
             for link in links:
                 try:
-                    response = requests.get(link, timeout=30)
+                    print(f"\n[DEBUG] Accessing with Cloudscraper: {link}")
+                    # Using scraper.get instead of requests.get
+                    response = scraper.get(link, timeout=30)
+                    print(f"[DEBUG] Page Status Code: {response.status_code}")
+                    
                     soup = BeautifulSoup(response.text, 'html.parser')
                     meta_title = soup.find('meta', attrs={'name': 'title'})
                     file_name = meta_title['content'] if meta_title else "file"
@@ -195,33 +207,35 @@ def run_download():
                     download_function = None
 
                     for script in script_tags:
-                        if 'function download' in script.text:
-                            download_function = script.text
-                            break
+                        if script.text and 'download' in script.text.lower():
+                            if 'function download' in script.text:
+                                download_function = script.text
+                                break
 
-                    if download_function:
-                        match = re.search(
-                            r'window\.open\(["\'](https?://[^\s"\'\)]+)',
-                            download_function
-                        )
+                    if not download_function:
+                        print("[DEBUG] ERROR: Could not find 'function download'. Cloudflare might still be blocking.")
+                        continue 
 
-                        if match:
-                            download_url = match.group(1)
-                            output_path = os.path.join(downloads_folder, file_name)
-                            print("Download URL:", download_url)
-                            print("Expected size (bytes):", response.headers.get("content-length"))
+                    match = re.search(
+                        r'window\.open\(["\'](https?://[^\s"\'\)]+)',
+                        download_function
+                    )
 
-                            print("Downloading:", file_name)
+                    if match:
+                        download_url = match.group(1)
+                        output_path = os.path.join(downloads_folder, file_name)
+                        print("Download URL extracted:", download_url)
 
-                            success = download_file(download_url, output_path, file_name)
+                        print("Downloading:", file_name)
+                        # We pass the scraper object to the download function so it shares the cleared session
+                        success = download_file(download_url, output_path, file_name, scraper)
 
-                            if success:
-                                remove_link_from_file(link)
-                            else:
-                                print("Will retry:", file_name)
-
-                                if os.path.exists(output_path):
-                                    os.remove(output_path)
+                        if success:
+                            remove_link_from_file(link)
+                        else:
+                            print("Will retry:", file_name)
+                            if os.path.exists(output_path):
+                                os.remove(output_path)
 
                 except Exception as e:
                     print("Error:", e)
